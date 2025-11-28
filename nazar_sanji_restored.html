@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>نظر سنجی</title>
+
+<!-- سعی می‌کنیم ExcelJS و FileSaver را از CDN بیاوریم؛ اگر مسدود شد، یک fallback به CSV وجود دارد -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+
+<style>
+  body {
+    font-family: 'Segoe UI', Tahoma, sans-serif;
+    padding: 20px;
+    direction: rtl;
+    /* کم‌رنگ‌تر کردن پس‌زمینه */
+    background: url('https://i.ibb.co/j9CmNvkW/001.jpg') no-repeat center top;
+    background-size: cover;
+    background-attachment: fixed;
+    background-color: rgba(255,255,255,0.92);
+    background-blend-mode: lighten;
+  }
+  h2 { text-align:center; color:#2c3e50; font-weight:bold; margin-bottom:18px; text-shadow: 0 1px 0 rgba(255,255,255,0.6); }
+  #searchInput { padding:12px; width:100%; max-width:520px; margin:0 auto 18px auto; display:block; border-radius:12px; border:1px solid #ccc; font-size:15px; }
+  table { border-collapse: separate; border-spacing:0; width:100%; background:#ffffffd8; border-radius:14px; overflow:hidden; box-shadow: 0 8px 18px rgba(0,0,0,0.12); border:2px solid #ddd; font-size:15px; text-align:center; }
+  th, td { padding:12px; border-bottom:1px solid #e6e6e6; }
+  th { background:#f7cac9; color:#333; font-weight:bold; }
+  td.name { background:#dff0d8; font-weight:bold; }
+  td.role { background:#ede7f6; font-weight:bold; }
+  tr:nth-child(even) { background:#f9fbfd; }
+  tr:hover { background:#eef2f7; }
+  .stars span { font-size:24px; cursor:pointer; color:#ccc; margin:0 4px; display:inline-block; }
+  .stars span.selected { color:gold; transform:scale(1.15); }
+  .controls { display:flex; gap:12px; justify-content:center; margin-top:16px; flex-wrap:wrap; }
+  button { padding:12px 22px; border:none; border-radius:10px; background:linear-gradient(135deg,#27ae60,#2ecc71); color:#fff; cursor:pointer; font-size:15px; }
+  small.hint { display:block; text-align:center; margin-top:10px; color:#666; }
+</style>
+</head>
+<body>
+<h2>فرم نظرسنجی پرسنل شبکه بهداشت و درمان شهرستان ملارد</h2>
+
+<input id="searchInput" placeholder="جستجو بر اساس نام یا سمت..." onkeyup="filterTable()">
+
+<div id="tableContainer"></div>
+
+<div class="controls">
+  <button onclick="downloadExcelOrCSV()">دانلود گزارش (Excel یا CSV)</button>
+  <button onclick="resetAll()">ریست کردن نمرات</button>
+</div>
+<small class="hint">اگر دانلود Excel نیامد، به صورت خودکار CSV دانلود می‌شود.</small>
+
+<script>
+/* داده‌ها — همان اطلاعات اولیه که داشتید */
+const factors = ['حسن خلق','تعهد و مسئولیت پذیری','اشراف به وظایف','کیفیت انجام کار','روحیه همکاری','توانایی حل مسئله'];
+const users = [
+    { name: 'دکتر پیمان پرچمی', role: 'ریاست شبکه بهداشت', scores: Array(factors.length).fill(0) },
+    { name: 'دکتر فطورچی', role: 'معاون شبکه بهداشت', scores: Array(factors.length).fill(0) },
+    { name: 'مهندس هدایت', role: 'سرپرست گسترش', scores: Array(factors.length).fill(0) },
+    { name: 'آقای گرامی', role: 'رئیس حراست', scores: Array(factors.length).fill(0) }
+];
+
+/* رندر جدول کامل با ستاره‌ها و مجموع و میانگین */
+function renderTable() {
+  let html = '<table><tr><th>نام</th><th>سمت</th>' + factors.map(f=>`<th>${f}</th>`).join('') + '<th>جمع</th><th>میانگین</th></tr>';
+  users.forEach((u,i)=>{
+    html += `<tr data-user="${i}"><td class="name">${u.name}</td><td class="role">${u.role}</td>`;
+    u.scores.forEach((s,j)=>{
+      html += `<td class="stars">${[1,2,3,4,5].map(k=>`<span data-user="${i}" data-factor="${j}" data-score="${k}">&#9733;</span>`).join('')}</td>`;
+    });
+    html += `<td class="total">${sum(u.scores)}</td><td class="average">${avg(u.scores)}</td></tr>`;
+  });
+  html += '</table>';
+  document.getElementById('tableContainer').innerHTML = html;
+  attachStarEvents();
+}
+
+/* محاسبات ساده */
+function sum(arr){ return arr.reduce((a,b)=>a+(b||0),0); }
+function avg(arr){ return (sum(arr)/arr.length).toFixed(2); }
+
+/* فعال‌سازی کلیک روی ستاره‌ها */
+function attachStarEvents(){
+  document.querySelectorAll('.stars span').forEach(st=>{
+    st.onclick = function(){
+      const u = +this.dataset.user;
+      const f = +this.dataset.factor;
+      const s = +this.dataset.score;
+      users[u].scores[f] = s;
+      updateStars(u,f);
+      updateRowTotals(u);
+    };
+  });
+}
+
+/* آپدیت نمایش ستاره‌ها */
+function updateStars(u,f){
+  document.querySelectorAll(`.stars span[data-user="${u}"][data-factor="${f}"]`).forEach(s=>{
+    s.classList.toggle('selected', +s.dataset.score <= users[u].scores[f]);
+  });
+}
+
+/* آپدیت جمع و میانگین ردیف */
+function updateRowTotals(u){
+  const row = document.querySelector(`tr[data-user="${u}"]`);
+  row.querySelector('.total').textContent = sum(users[u].scores);
+  row.querySelector('.average').textContent = avg(users[u].scores);
+}
+
+/* فیلتر جستجو */
+function filterTable(){
+  const v = document.getElementById('searchInput').value.trim();
+  document.querySelectorAll('#tableContainer table tr').forEach((r,i)=>{
+    if(i===0) return;
+    r.style.display = r.innerText.includes(v) ? '' : 'none';
+  });
+}
+
+/* ریست کردن نمرات */
+function resetAll(){
+  users.forEach(u=> u.scores = Array(factors.length).fill(0));
+  renderTable();
+}
+
+/* دانلود: ابتدا تلاش برای ExcelJS، اگر خطا بود، CSV */
+async function downloadExcelOrCSV(){
+  try {
+    if(typeof ExcelJS === 'undefined') throw new Error('ExcelJS not loaded');
+    const wb = new ExcelJS.Workbook();
+    const sh = wb.addWorksheet('گزارش');
+    sh.columns = [
+      {header:'نام', key:'name', width:30},
+      {header:'سمت', key:'role', width:30},
+      ...factors.map(f=>({header:f, key:f, width:18})),
+      {header:'جمع', key:'total', width:12},
+      {header:'میانگین', key:'average', width:12}
+    ];
+    users.forEach(u=>{
+      sh.addRow({
+        name: u.name,
+        role: u.role,
+        ...factors.reduce((a,f,i)=> (a[f]=u.scores[i],a),{}),
+        total: sum(u.scores),
+        average: avg(u.scores)
+      });
+    });
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    if(typeof saveAs === 'function') {
+      saveAs(blob, 'گزارش_نظرسنجی.xlsx');
+    } else {
+      // fallback download
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href=url; a.download='گزارش_نظرسنجی.xlsx'; a.click();
+      URL.revokeObjectURL(url);
+    }
+  } catch(e){
+    // fallback to CSV (guaranteed)
+    downloadCSV();
+  }
+}
+
+/* دانلود CSV */
+function downloadCSV(){
+  const headers = ['نام','سمت', ...factors, 'جمع','میانگین'];
+  let rows = [headers.join(',')];
+  users.forEach(u=>{
+    const row = [u.name, u.role, ...u.scores.map(s=>s||0), sum(u.scores), avg(u.scores)];
+    rows.push(row.map(cell => `"${String(cell).replace(/"/g,'""')}"`).join(','));
+  });
+  const csv = rows.join('\n');
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href=url; a.download='گزارش_نظرسنجی.csv'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* هنگام بارگزاری اولیه */
+renderTable();
+</script>
+</body>
+</html>
